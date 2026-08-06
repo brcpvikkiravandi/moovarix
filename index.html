@@ -1,0 +1,778 @@
+﻿<!DOCTYPE html>
+<html lang="ta">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Moovarix - Fast Billing & Auditing System</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#991b1b">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Moovarix">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+  <style>
+    @media print {
+      .no-print { display: none !important; }
+      body { background-color: white !important; padding: 0 !important; }
+      .print-container { width: 100% !important; margin: 0 !important; padding: 0 !important; border: none !important; }
+      input, select { border: none !important; outline: none !important; background: transparent !important; -webkit-appearance: none; appearance: none; }
+      .print-container table { min-width: 0 !important; }
+      .print-container .overflow-x-auto { overflow: visible !important; }
+    }
+    body {
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      -webkit-tap-highlight-color: transparent;
+    }
+    @media (max-width: 1023px) {
+      .print-container { padding: 1rem !important; }
+    }
+  </style>
+</head>
+<body class="bg-gray-200 text-gray-900 font-sans">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const defaultProducts = [
+      { id: 1, name: 'Shackle Washer Mah Van Thick 7/8(JY77)', hsn: '73181600', gst: 18, price: 4.20 },
+      { id: 2, name: 'Rear Hanger Cabking (Tourister)JY136', hsn: '87169010', gst: 18, price: 678.00 },
+      { id: 3, name: 'Spring Pin 22X95(HEX) Head Side Nipple', hsn: '73201011', gst: 18, price: 75.60 },
+      { id: 4, name: 'Engine Oil 1L', hsn: '2710', gst: 18, price: 450.00 },
+      { id: 5, name: 'Brake Pad Set', hsn: '8708', gst: 18, price: 850.00 }
+    ];
+
+    function App() {
+      // Products Master State
+      const [products, setProducts] = useState(() => {
+        try {
+          const saved = localStorage.getItem('auto_products_v5');
+          return saved ? JSON.parse(saved) : defaultProducts;
+        } catch (e) {
+          return defaultProducts;
+        }
+      });
+
+      // Cart initialized as EMPTY (Goods default-ஆ எதும் காட்டாது)
+      const [cart, setCart] = useState([]);
+
+      const [searchTerm, setSearchTerm] = useState('');
+      const [salesHistory, setSalesHistory] = useState(() => {
+        try {
+          const saved = localStorage.getItem('auto_sales_history_v5');
+          return saved ? JSON.parse(saved) : [];
+        } catch (e) {
+          return [];
+        }
+      });
+
+      // Customer & Invoice Details
+      const [invoiceDetails, setInvoiceDetails] = useState({
+        invNo: '2026-27/1001',
+        date: new Date().toISOString().split('T')[0],
+        customerName: '',
+        customerAddr: '',
+        gstin: '',
+        paymentMode: 'DIRECT'
+      });
+
+      const [showAddModal, setShowAddModal] = useState(false);
+      const [showAuditModal, setShowAuditModal] = useState(false);
+      const [auditFilterType, setAuditFilterType] = useState('monthly');
+      const [auditMonth, setAuditMonth] = useState(new Date().toISOString().slice(0, 7));
+      const [auditYear, setAuditYear] = useState('2026');
+      const [newProduct, setNewProduct] = useState({ name: '', hsn: '', gst: 18, price: '' });
+      const [mobileView, setMobileView] = useState('catalog'); // 'catalog' | 'bill' (mobile-only tab switcher)
+
+      useEffect(() => {
+        localStorage.setItem('auto_products_v5', JSON.stringify(products));
+      }, [products]);
+
+      useEffect(() => {
+        localStorage.setItem('auto_sales_history_v5', JSON.stringify(salesHistory));
+      }, [salesHistory]);
+
+      // Details Refresh Function
+      const handleRefreshDetails = () => {
+        setInvoiceDetails({
+          ...invoiceDetails,
+          customerName: '',
+          customerAddr: '',
+          gstin: ''
+        });
+      };
+
+      // Add Product to Cart
+      const addToCart = (product) => {
+        const existingIndex = cart.findIndex(item => item.id === product.id);
+        if (existingIndex > -1) {
+          const updatedCart = [...cart];
+          updatedCart[existingIndex].qty += 1;
+          setCart(updatedCart);
+        } else {
+          setCart([...cart, { ...product, qty: 1 }]);
+        }
+        setMobileView('bill');
+      };
+
+      const updateCartItem = (index, field, value) => {
+        const updatedCart = [...cart];
+        if (field === 'name' || field === 'hsn') {
+          updatedCart[index][field] = value;
+        } else if (field === 'totalAmount') {
+          const numVal = Number(value) || 0;
+          const qty = updatedCart[index].qty || 1;
+          updatedCart[index].price = numVal / qty;
+        } else {
+          updatedCart[index][field] = Number(value) || 0;
+        }
+        setCart(updatedCart);
+      };
+
+      const removeFromCart = (index) => {
+        setCart(cart.filter((_, i) => i !== index));
+      };
+
+      const handleAddNewProduct = (e) => {
+        e.preventDefault();
+        if (!newProduct.name || !newProduct.price) {
+          alert('பொருளின் பெயர் மற்றும் விலையை உள்ளிடவும்!');
+          return;
+        }
+
+        const createdItem = {
+          id: Date.now(),
+          name: newProduct.name,
+          hsn: newProduct.hsn || '8708',
+          gst: Number(newProduct.gst) || 18,
+          price: Number(newProduct.price)
+        };
+
+        setProducts([createdItem, ...products]);
+        addToCart(createdItem);
+        setNewProduct({ name: '', hsn: '', gst: 18, price: '' });
+        setShowAddModal(false);
+      };
+
+      const handleCSVImport = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        Papa.parse(file, {
+          header: true,
+          dynamicTyping: true,
+          skipEmptyLines: true,
+          complete: (results) => {
+            const imported = results.data
+              .filter(row => row.name && row.price)
+              .map((row, index) => ({
+                id: Date.now() + index,
+                name: String(row.name),
+                hsn: String(row.hsn || '8708'),
+                gst: Number(row.gst) || 18,
+                price: Number(row.price) || 0
+              }));
+            setProducts(prev => [...imported, ...prev]);
+            alert(`${imported.length} பொருட்கள் ஏற்றப்பட்டன!`);
+          }
+        });
+      };
+
+      const handleCSVExport = () => {
+        const csv = Papa.unparse(products);
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'products_inventory.csv';
+        a.click();
+      };
+
+      // Calculations
+      // Price entered/stored is GST-INCLUSIVE. Back-calculate taxable value & tax split from it.
+      const grandTotalRaw = cart.reduce((acc, item) => acc + (item.price * item.qty), 0);
+      const subTotal = cart.reduce((acc, item) => {
+        const lineTotal = item.price * item.qty;
+        const taxable = lineTotal / (1 + (item.gst / 100));
+        return acc + taxable;
+      }, 0);
+      const totalTax = grandTotalRaw - subTotal;
+      const totalCgst = totalTax / 2;
+      const totalSgst = totalTax / 2;
+      const cgstRatePct = subTotal > 0 ? (totalCgst / subTotal) * 100 : 0;
+      const sgstRatePct = subTotal > 0 ? (totalSgst / subTotal) * 100 : 0;
+      const rawGrandTotal = grandTotalRaw;
+      const grandTotal = Math.round(rawGrandTotal);
+      const roundOff = (grandTotal - rawGrandTotal).toFixed(2);
+
+      const handlePrintAndSave = () => {
+        if (cart.length === 0) {
+          alert("பில்லில் எந்த பொருட்களும் சேர்க்கப்படவில்லை!");
+          return;
+        }
+
+        const newSale = {
+          id: Date.now(),
+          date: invoiceDetails.date,
+          invNo: invoiceDetails.invNo,
+          custName: invoiceDetails.customerName || 'CASH SALE',
+          custGstin: invoiceDetails.gstin || '-',
+          taxableAmt: subTotal,
+          cgst: totalCgst,
+          sgst: totalSgst,
+          grandTotal: grandTotal
+        };
+
+        setSalesHistory(prev => [...prev, newSale]);
+        setTimeout(() => window.print(), 200);
+      };
+
+      // Delete a product from the master inventory list
+      const deleteProduct = (id, e) => {
+        e.stopPropagation();
+        if (window.confirm('இந்த பொருளை நிரந்தரமாக நீக்க வேண்டுமா?')) {
+          setProducts(products.filter(p => p.id !== id));
+        }
+      };
+
+      // Search: exact matches first, then "starts with", then "contains", then HSN matches
+      const filteredProducts = products
+        .filter(p =>
+          p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          p.hsn.includes(searchTerm)
+        )
+        .sort((a, b) => {
+          if (!searchTerm) return 0;
+          const term = searchTerm.toLowerCase();
+          const rank = (p) => {
+            const name = p.name.toLowerCase();
+            if (name === term) return 0;
+            if (name.startsWith(term)) return 1;
+            if (name.includes(term)) return 2;
+            if (p.hsn.includes(searchTerm)) return 3;
+            return 4;
+          };
+          return rank(a) - rank(b);
+        });
+
+      // Frequently Used Items (Top 4 items)
+      const frequentProducts = products.slice(0, 4);
+
+      const filteredAuditSales = salesHistory.filter(sale => {
+        if (!sale.date) return false;
+        if (auditFilterType === 'monthly') {
+          return sale.date.startsWith(auditMonth);
+        } else {
+          return sale.date.startsWith(auditYear);
+        }
+      });
+
+      const auditTotals = filteredAuditSales.reduce((acc, s) => ({
+        taxable: acc.taxable + s.taxableAmt,
+        cgst: acc.cgst + s.cgst,
+        sgst: acc.sgst + s.sgst,
+        grand: acc.grand + s.grandTotal
+      }), { taxable: 0, cgst: 0, sgst: 0, grand: 0 });
+
+      const handleExportAuditCSV = () => {
+        const auditData = filteredAuditSales.map(s => ({
+          'Date': s.date,
+          'Invoice No': s.invNo,
+          'Customer Name': s.custName,
+          'GSTIN': s.custGstin,
+          'Taxable Amount': s.taxableAmt.toFixed(2),
+          'CGST': s.cgst.toFixed(2),
+          'SGST': s.sgst.toFixed(2),
+          'Total Tax': (s.cgst + s.sgst).toFixed(2),
+          'Grand Total': s.grandTotal.toFixed(2)
+        }));
+
+        const csv = Papa.unparse(auditData);
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Audit_Report_${auditFilterType === 'monthly' ? auditMonth : auditYear}.csv`;
+        a.click();
+      };
+
+      return (
+        <div class="min-h-screen flex flex-col">
+          {/* Header */}
+          <header class="bg-red-800 text-white p-3 no-print flex flex-wrap justify-between items-center gap-2 shadow-md">
+            <h1 class="text-lg sm:text-xl font-black tracking-wide">SAKTHI MURUGAN MOTORS</h1>
+            <div class="flex flex-wrap gap-2">
+              <button onClick={() => setShowAuditModal(true)} class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-bold">
+                📊 Audit
+              </button>
+              <label class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded cursor-pointer text-xs font-bold">
+                📥 Import
+                <input type="file" accept=".csv" onChange={handleCSVImport} class="hidden" />
+              </label>
+              <button onClick={handleCSVExport} class="bg-gray-700 hover:bg-gray-900 text-white px-3 py-1.5 rounded text-xs font-bold">
+                📤 Export
+              </button>
+            </div>
+          </header>
+
+          {/* Mobile-only Tab Switcher (Catalog <-> Bill) */}
+          <div class="lg:hidden no-print flex sticky top-0 z-40 shadow-md">
+            <button
+              onClick={() => setMobileView('catalog')}
+              class={`flex-1 py-2.5 text-sm font-bold ${mobileView === 'catalog' ? 'bg-red-800 text-white' : 'bg-white text-gray-500'}`}
+            >
+              🛍️ Items
+            </button>
+            <button
+              onClick={() => setMobileView('bill')}
+              class={`flex-1 py-2.5 text-sm font-bold relative ${mobileView === 'bill' ? 'bg-red-800 text-white' : 'bg-white text-gray-500'}`}
+            >
+              🧾 Bill{cart.length > 0 ? ` (${cart.length})` : ''}
+            </button>
+          </div>
+
+          <div class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4">
+            {/* Left Selection Catalog Panel */}
+            <div class={`${mobileView === 'catalog' ? 'flex' : 'hidden'} lg:flex lg:col-span-4 bg-white p-4 rounded-lg shadow-md no-print flex-col h-[calc(100vh-135px)] lg:h-[calc(100vh-90px)]`}>
+              
+              {/* Frequently Used Items (அடிக்கடி பயன்படும் பொருட்கள்) */}
+              <div class="mb-3">
+                <div class="text-xs font-bold text-gray-500 mb-1">⭐ TOP ITEMS (அடிக்கடி பயன்படுபவை)</div>
+                <div class="grid grid-cols-2 gap-1.5">
+                  {frequentProducts.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => addToCart(p)}
+                      class="bg-red-50 hover:bg-red-100 border border-red-200 text-red-900 font-bold p-2 rounded text-xs text-left truncate"
+                    >
+                      + {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Search Box */}
+              <div class="flex gap-2 mb-3">
+                <input
+                  type="text"
+                  placeholder="🔍 Search item or HSN..."
+                  class="w-full p-2 border-2 border-gray-300 rounded text-sm focus:outline-none focus:border-red-700"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                <button
+                  onClick={() => setShowAddModal(true)}
+                  class="bg-orange-600 hover:bg-orange-700 text-white font-bold px-3 py-2 rounded text-xs min-w-[80px]"
+                >
+                  + Add Item
+                </button>
+              </div>
+
+              {/* All Items List */}
+              <div class="grid grid-cols-1 gap-2 overflow-y-auto flex-1">
+                {filteredProducts.length === 0 ? (
+                  <div class="text-center text-xs text-gray-400 py-6 italic">பொருள் எதுவும் கிடைக்கவில்லை.</div>
+                ) : (
+                  filteredProducts.map(p => (
+                    <div
+                      key={p.id}
+                      onClick={() => addToCart(p)}
+                      class="bg-slate-50 hover:bg-red-50 border border-slate-200 rounded p-2.5 text-left flex justify-between items-center transition cursor-pointer"
+                    >
+                      <div class="min-w-0">
+                        <div class="font-bold text-slate-900 text-sm truncate">{p.name}</div>
+                        <div class="text-xs text-gray-500">HSN: {p.hsn} | GST: {p.gst}%</div>
+                      </div>
+                      <div class="flex items-center gap-2 flex-shrink-0">
+                        <div class="text-red-700 font-extrabold text-base">₹{p.price}</div>
+                        <button
+                          onClick={(e) => deleteProduct(p.id, e)}
+                          title="Delete item"
+                          class="text-gray-400 hover:text-red-600 hover:bg-red-100 rounded p-1 font-bold text-sm"
+                        >
+                          🗑️
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Right Printable Clean Invoice Sheet */}
+            <div class={`${mobileView === 'bill' ? 'flex' : 'hidden'} print:flex lg:flex lg:col-span-8 bg-white p-6 rounded-lg shadow-md print-container flex-col justify-between overflow-y-auto h-[calc(100vh-135px)] lg:h-[calc(100vh-90px)]`}>
+              <div>
+                {/* Header Title */}
+                <div class="text-center mb-4">
+                  <div class="text-xs font-bold text-left">33AZXPA1234E3ZO <span class="float-right text-xs">TAX INVOICE</span></div>
+                  <h1 class="text-3xl font-black text-red-700">SAKTHI MURUGAN MOTORS</h1>
+                  <p class="text-xs">27, Trichy Main Road , Villupuram-625 001.</p>
+                  <p class="text-xs"> Cell: 9443379214</p>
+                </div>
+
+                {/* Customer Meta Info with Refresh Button */}
+                <div class="flex text-xs mb-4">
+                  <div class="flex-1 pr-4">
+                    <div class="flex justify-between items-center mb-1">
+                      <span class="font-bold">Details:</span>
+                      <button onClick={handleRefreshDetails} class="no-print bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-0.5 rounded text-[10px] font-bold">
+                        🔄 Refresh
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Customer Name"
+                      value={invoiceDetails.customerName}
+                      onChange={(e) => setInvoiceDetails({ ...invoiceDetails, customerName: e.target.value })}
+                      class="w-full font-bold uppercase outline-none mb-1"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Customer Address"
+                      value={invoiceDetails.customerAddr}
+                      onChange={(e) => setInvoiceDetails({ ...invoiceDetails, customerAddr: e.target.value })}
+                      class="w-full outline-none mb-1"
+                    />
+                    <div>UIN / GSTIN:
+                      <input
+                        type="text"
+                        placeholder="GSTIN Number"
+                        value={invoiceDetails.gstin}
+                        onChange={(e) => setInvoiceDetails({ ...invoiceDetails, gstin: e.target.value })}
+                        class="font-bold outline-none ml-1"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="flex-1 pl-4 border-l border-gray-300">
+                    <div class="flex justify-between mb-1"><span>Invoice No.:</span>
+                      <input
+                        type="text"
+                        value={invoiceDetails.invNo}
+                        onChange={(e) => setInvoiceDetails({ ...invoiceDetails, invNo: e.target.value })}
+                        class="font-bold text-right outline-none w-32"
+                      />
+                    </div>
+                    <div class="flex justify-between mb-1"><span>Dated:</span>
+                      <input
+                        type="date"
+                        value={invoiceDetails.date}
+                        onChange={(e) => setInvoiceDetails({ ...invoiceDetails, date: e.target.value })}
+                        class="font-bold text-right outline-none w-32"
+                      />
+                    </div>
+                    <div class="flex justify-between"><span>Payment Mode:</span>
+                      <input
+                        type="text"
+                        value={invoiceDetails.paymentMode}
+                        onChange={(e) => setInvoiceDetails({ ...invoiceDetails, paymentMode: e.target.value })}
+                        class="font-bold text-right outline-none w-24"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Invoice Table - No Border Lines */}
+                <div class="overflow-x-auto -mx-1 px-1">
+                <table class="w-full text-left text-xs mb-4 min-w-[560px] lg:min-w-0">
+                  <thead>
+                    <tr class="border-b-2 border-black font-bold">
+                      <th class="py-2">Description of Goods</th>
+                      <th class="py-2 w-24">HSN</th>
+                      <th class="py-2 w-16">Tax %</th>
+                      <th class="py-2 w-16 text-center">Qty</th>
+                      <th class="py-2 w-28 text-right">Amount(₹)</th>
+                      <th class="py-2 w-6 no-print"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cart.length === 0 ? (
+                      <tr>
+                        <td colSpan="6" class="text-center py-8 text-gray-400 italic">
+                          இங்கு பொருட்கள் எதுவும் இல்லை. இடதுபுறம் உள்ள பொருட்களில் கிளிக் செய்து சேர்க்கவும்.
+                        </td>
+                      </tr>
+                    ) : (
+                      cart.map((item, index) => {
+                        const lineAmt = item.price * item.qty;
+                        return (
+                          <tr key={index} class="border-b border-gray-100">
+                            <td class="py-1.5">
+                              <input
+                                type="text"
+                                value={item.name}
+                                onChange={(e) => updateCartItem(index, 'name', e.target.value)}
+                                class="w-full font-semibold outline-none"
+                              />
+                            </td>
+                            <td class="py-1.5">
+                              <input
+                                type="text"
+                                value={item.hsn}
+                                onChange={(e) => updateCartItem(index, 'hsn', e.target.value)}
+                                class="w-full outline-none"
+                              />
+                            </td>
+                            <td class="py-1.5">
+                              <select
+                                value={item.gst}
+                                onChange={(e) => updateCartItem(index, 'gst', e.target.value)}
+                                class="w-full outline-none bg-transparent"
+                              >
+                                <option value="0">0%</option>
+                                <option value="5">5%</option>
+                                <option value="12">12%</option>
+                                <option value="18">18%</option>
+                                <option value="28">28%</option>
+                              </select>
+                            </td>
+                            <td class="py-1.5 text-center">
+                              <input
+                                type="number"
+                                value={item.qty}
+                                onChange={(e) => updateCartItem(index, 'qty', e.target.value)}
+                                class="w-full text-center font-bold outline-none"
+                              />
+                            </td>
+                            <td class="py-1.5 text-right font-bold">
+                              <input
+                                type="number"
+                                value={lineAmt.toFixed(2)}
+                                onChange={(e) => updateCartItem(index, 'totalAmount', e.target.value)}
+                                class="w-full text-right font-bold outline-none"
+                              />
+                            </td>
+                            <td class="py-1.5 text-center no-print">
+                              <button onClick={() => removeFromCart(index)} class="text-red-600 font-bold">✕</button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+                </div>
+
+                {/* Sub Total Section */}
+                <div class="flex justify-end text-xs mb-2">
+                  <div class="w-1/2 space-y-1">
+                    <div class="flex justify-between font-bold"><span>Taxable Value</span><span>₹ {subTotal.toFixed(2)}</span></div>
+                    <div class="flex justify-between text-gray-700"><span>Add : CGST {cgstRatePct.toFixed(1)}%</span><span>{totalCgst.toFixed(2)}</span></div>
+                    <div class="flex justify-between text-gray-700"><span>Add : SGST {sgstRatePct.toFixed(1)}%</span><span>{totalSgst.toFixed(2)}</span></div>
+                    <div class="flex justify-between text-gray-700"><span>Less : Rounded Off (-)</span><span>{roundOff}</span></div>
+                  </div>
+                </div>
+
+                {/* Grand Total */}
+                <div class="flex justify-between items-center border-t-2 border-b-2 border-black py-2 font-black text-lg">
+                  <span>Grand Total</span>
+                  <span>₹ {grandTotal.toFixed(2)}</span>
+                </div>
+
+                {/* Footer Terms & Signature */}
+                <div class="flex justify-between items-end text-xs mt-10">
+                  <div>
+                    <p class="font-bold mb-1">Terms & Conditions:</p>
+                    <p>1. Goods once sold will not be taken back.</p>
+                    <p>2. Subject to Madurai Jurisdiction.</p>
+                  </div>
+                  <div class="text-right font-bold">
+                    <p class="mb-8">For SAKTHI MURUGAN MOTORS</p>
+                    <p>Authorised Signature</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div class="grid grid-cols-2 gap-4 mt-6 no-print">
+                <button onClick={() => setCart([])} class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2.5 rounded text-sm">
+                  🗑️ Clear Invoice
+                </button>
+                <button onClick={handlePrintAndSave} class="bg-red-800 hover:bg-red-900 text-white font-bold py-2.5 rounded text-sm">
+                  🖨️ PRINT & SAVE
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Add Modal */}
+          {showAddModal && (
+            <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 no-print">
+              <div class="bg-white rounded-lg p-5 w-full max-w-sm shadow-xl">
+                <h3 class="text-base font-bold mb-3 text-gray-800">Add New Item</h3>
+                <form onSubmit={handleAddNewProduct} class="space-y-3">
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Product Description</label>
+                    <input
+                      type="text"
+                      required
+                      class="w-full p-2 border rounded text-sm"
+                      value={newProduct.name}
+                      onChange={e => setNewProduct({ ...newProduct, name: e.target.value })}
+                    />
+                  </div>
+                  <div class="grid grid-cols-2 gap-2">
+                    <div>
+                      <label class="block text-xs font-bold mb-1">HSN Code</label>
+                      <input
+                        type="text"
+                        class="w-full p-2 border rounded text-sm"
+                        value={newProduct.hsn}
+                        onChange={e => setNewProduct({ ...newProduct, hsn: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label class="block text-xs font-bold mb-1">GST %</label>
+                      <select
+                        class="w-full p-2 border rounded text-sm"
+                        value={newProduct.gst}
+                        onChange={e => setNewProduct({ ...newProduct, gst: Number(e.target.value) })}
+                      >
+                        <option value="0">0%</option>
+                        <option value="5">5%</option>
+                        <option value="12">12%</option>
+                        <option value="18">18%</option>
+                        <option value="28">28%</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold mb-1">Price (₹) — GST Inclusive</label>
+                    <input
+                      type="number"
+                      required
+                      class="w-full p-2 border rounded text-sm font-bold"
+                      value={newProduct.price}
+                      onChange={e => setNewProduct({ ...newProduct, price: e.target.value })}
+                    />
+                  </div>
+                  <div class="flex gap-2 pt-2">
+                    <button type="button" onClick={() => setShowAddModal(false)} class="w-1/2 bg-gray-300 font-bold py-2 rounded text-xs">
+                      Cancel
+                    </button>
+                    <button type="submit" class="w-1/2 bg-red-800 text-white font-bold py-2 rounded text-xs">
+                      Save & Add
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* Audit Sales Report Modal */}
+          {showAuditModal && (
+            <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50 no-print">
+              <div class="bg-white rounded-lg p-6 w-full max-w-5xl max-h-[90vh] overflow-y-auto shadow-2xl">
+                <div class="flex justify-between items-center mb-4 border-b pb-2">
+                  <h2 class="text-lg font-bold text-gray-800">📊 Auditing Sales Report</h2>
+                  <button onClick={() => setShowAuditModal(false)} class="text-red-600 font-bold text-lg">✕</button>
+                </div>
+
+                {/* Audit Controls */}
+                <div class="flex flex-wrap gap-3 mb-4 items-center bg-gray-50 p-3 rounded">
+                  <label class="text-xs font-bold">Filter By:</label>
+                  <select
+                    value={auditFilterType}
+                    onChange={(e) => setAuditFilterType(e.target.value)}
+                    class="p-1.5 border rounded text-xs"
+                  >
+                    <option value="monthly">Monthly</option>
+                    <option value="yearly">Yearly</option>
+                  </select>
+
+                  {auditFilterType === 'monthly' ? (
+                    <input
+                      type="month"
+                      value={auditMonth}
+                      onChange={(e) => setAuditMonth(e.target.value)}
+                      class="p-1 border rounded text-xs"
+                    />
+                  ) : (
+                    <input
+                      type="number"
+                      value={auditYear}
+                      onChange={(e) => setAuditYear(e.target.value)}
+                      class="p-1 border rounded text-xs w-20"
+                    />
+                  )}
+
+                  <button onClick={handleExportAuditCSV} class="bg-green-600 text-white px-3 py-1.5 rounded text-xs font-bold">
+                    📤 Export Audit CSV
+                  </button>
+                  <button onClick={() => window.print()} class="bg-gray-700 text-white px-3 py-1.5 rounded text-xs font-bold">
+                    🖨️ Print Report
+                  </button>
+                </div>
+
+                {/* Audit Report Table */}
+                <table class="w-full text-left text-xs border border-gray-300">
+                  <thead class="bg-gray-100 border-b">
+                    <tr>
+                      <th class="p-2 border-r">Date</th>
+                      <th class="p-2 border-r">Inv No</th>
+                      <th class="p-2 border-r">Customer Name</th>
+                      <th class="p-2 border-r">GSTIN</th>
+                      <th class="p-2 border-r text-right">Taxable (₹)</th>
+                      <th class="p-2 border-r text-right">CGST (₹)</th>
+                      <th class="p-2 border-r text-right">SGST (₹)</th>
+                      <th class="p-2 border-r text-right">Total Tax (₹)</th>
+                      <th class="p-2 text-right">Grand Total (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredAuditSales.length === 0 ? (
+                      <tr>
+                        <td colSpan="9" class="text-center py-6 text-gray-400">தகவல்கள் எதுவும் கிடைக்கவில்லை.</td>
+                      </tr>
+                    ) : (
+                      filteredAuditSales.map((s, i) => (
+                        <tr key={i} class="border-b">
+                          <td class="p-2 border-r">{s.date}</td>
+                          <td class="p-2 border-r">{s.invNo}</td>
+                          <td class="p-2 border-r">{s.custName}</td>
+                          <td class="p-2 border-r">{s.custGstin}</td>
+                          <td class="p-2 border-r text-right">{s.taxableAmt.toFixed(2)}</td>
+                          <td class="p-2 border-r text-right">{s.cgst.toFixed(2)}</td>
+                          <td class="p-2 border-r text-right">{s.sgst.toFixed(2)}</td>
+                          <td class="p-2 border-r text-right">{(s.cgst + s.sgst).toFixed(2)}</td>
+                          <td class="p-2 text-right font-bold">{s.grandTotal.toFixed(2)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  <tfoot class="bg-gray-200 font-bold">
+                    <tr>
+                      <td colSpan="4" class="p-2 text-right">TOTAL:</td>
+                      <td class="p-2 text-right">₹ {auditTotals.taxable.toFixed(2)}</td>
+                      <td class="p-2 text-right">₹ {auditTotals.cgst.toFixed(2)}</td>
+                      <td class="p-2 text-right">₹ {auditTotals.sgst.toFixed(2)}</td>
+                      <td class="p-2 text-right">₹ {(auditTotals.cgst + auditTotals.sgst).toFixed(2)}</td>
+                      <td class="p-2 text-right">₹ {auditTotals.grand.toFixed(2)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+
+    if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>
